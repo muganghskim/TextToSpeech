@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+
 @RestController
 @RequestMapping("/text")
 public class TtsController {
@@ -18,9 +20,9 @@ public class TtsController {
     }
 
     @PostMapping("/convert-to-audio")
-    public ResponseEntity<String> convertToAudio(@RequestBody String text) {
+    public ResponseEntity<String> convertToAudio(@RequestBody String text) throws IOException {
         // 서비스에게 텍스트 데이터 전달하여 음성 변환 수행 요청
-        String audioFilePath = ttsService.convertToAudio(text);
+        String audioFilePath = ttsService.convertTextToAudio(text);
 
         // 생성된 오디오 파일 경로를 클라이언트에 반환
         return ResponseEntity.ok(audioFilePath);
