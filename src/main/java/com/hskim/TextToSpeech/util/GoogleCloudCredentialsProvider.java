@@ -1,6 +1,7 @@
 package com.hskim.TextToSpeech.util;
 
 import com.google.api.gax.core.CredentialsProvider;
+import com.google.auth.Credentials;
 import com.google.auth.oauth2.GoogleCredentials;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
@@ -11,13 +12,20 @@ import java.io.InputStream;
 @Component
 public class GoogleCloudCredentialsProvider implements CredentialsProvider {
 
-    private static final String CREDENTIALS_FILE_PATH = "resources/static/lucid-volt-370402-baf73142fe48.json";
+    private static final String CREDENTIALS_FILE_PATH = "static/lucid-volt-370402-baf73142fe48.json";
 
     @Override
-    public GoogleCredentials getCredentials() throws IOException {
+//    public GoogleCredentials getCredentials() throws IOException {
+//        ClassPathResource resource = new ClassPathResource(CREDENTIALS_FILE_PATH);
+//        try (InputStream inputStream = resource.getInputStream()) {
+//            return GoogleCredentials.fromStream(inputStream);
+//        }
+//    }
+    public Credentials getCredentials() throws IOException {
         ClassPathResource resource = new ClassPathResource(CREDENTIALS_FILE_PATH);
         try (InputStream inputStream = resource.getInputStream()) {
-            return GoogleCredentials.fromStream(inputStream);
+            GoogleCredentials googleCredentials = GoogleCredentials.fromStream(inputStream);
+            return googleCredentials;
         }
     }
 }
