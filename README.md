@@ -84,6 +84,23 @@ Invoke-RestMethod `
 
 The response contains unique MP3 and SRT paths and download URLs. Files are stored in `output/` by default. Override the directory with `TTS_OUTPUT_DIRECTORY`.
 
+### Video project JSON
+
+The project endpoint accepts a complete video-project JSON document. Unrelated metadata is ignored. The service sorts `scenes` by `order`, combines each non-blank `narration`, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, and `tts.pitch` when present.
+
+```powershell
+$result = Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://localhost:8080/text/synthesize-project' `
+  -ContentType 'application/json' `
+  -InFile 'C:\path\to\video_project.json'
+
+Invoke-WebRequest -Uri "http://localhost:8080$($result.audioUrl)" -OutFile '.\project.mp3'
+Invoke-WebRequest -Uri "http://localhost:8080$($result.subtitleUrl)" -OutFile '.\project.srt'
+```
+
+Only `scenes[].narration` is required. `tts.languageCode` falls back to `project.language`, then `en-US`. Long projects are automatically split below Google's per-request SSML limit and returned as one MP3 with one continuous SRT timeline.
+
 ## Test and package
 
 ```powershell

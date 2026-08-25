@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -55,21 +56,34 @@ public class TtsService {
 
         String languageCode = request.effectiveLanguageCode();
         List<String> cueTexts = subtitleSegmenter.segment(request.text(), languageCode);
-        String ssml = buildSsml(cueTexts);
-        if (ssml.getBytes(StandardCharsets.UTF_8).length > GOOGLE_TTS_INPUT_LIMIT) {
-            throw new IllegalArgumentException(
-                    "The SSML input exceeds Google TTS's 5,000-byte request limit.");
-        }
+        List<List<String>> cueBatches = partitionCues(cueTexts);
+        ByteArrayOutputStream audio = new ByteArrayOutputStream();
+        List<SubtitleCue> cues = new ArrayList<>();
+        double timelineOffset = 0.0;
 
-        SynthesizeSpeechResponse response = speechSynthesizer.synthesize(buildRequest(request, languageCode, ssml));
-        List<SubtitleCue> cues = createTimedCues(
-                cueTexts, response.getTimepointsList(), request.effectiveSpeakingRate());
+        for (List<String> cueBatch : cueBatches) {
+            String ssml = buildSsml(cueBatch);
+            SynthesizeSpeechResponse response = speechSynthesizer.synthesize(
+                    buildRequest(request, languageCode, ssml));
+            audio.writeBytes(response.getAudioContent().toByteArray());
+
+            List<SubtitleCue> batchCues = createTimedCues(
+                    cueBatch, response.getTimepointsList(), request.effectiveSpeakingRate());
+            for (SubtitleCue cue : batchCues) {
+                cues.add(new SubtitleCue(
+                        cues.size() + 1,
+                        cue.text(),
+                        cue.startSeconds() + timelineOffset,
+                        cue.endSeconds() + timelineOffset));
+            }
+            timelineOffset = cues.get(cues.size() - 1).endSeconds();
+        }
 
         Files.createDirectories(outputDirectory);
         String id = UUID.randomUUID().toString();
         Path audioFile = outputDirectory.resolve(id + ".mp3");
         Path subtitleFile = outputDirectory.resolve(id + ".srt");
-        Files.write(audioFile, response.getAudioContent().toByteArray());
+        Files.write(audioFile, audio.toByteArray());
         try {
             Files.writeString(subtitleFile, srtWriter.write(cues), StandardCharsets.UTF_8);
         } catch (IOException exception) {
@@ -84,6 +98,34 @@ public class TtsService {
                 "/text/files/" + audioFile.getFileName(),
                 "/text/files/" + subtitleFile.getFileName(),
                 cues.size());
+    }
+
+    private List<List<String>> partitionCues(List<String> cueTexts) {
+        List<List<String>> batches = new ArrayList<>();
+        List<String> current = new ArrayList<>();
+
+        for (String cueText : cueTexts) {
+            List<String> candidate = new ArrayList<>(current);
+            candidate.add(cueText);
+            if (!current.isEmpty() && ssmlSize(candidate) > GOOGLE_TTS_INPUT_LIMIT) {
+                batches.add(List.copyOf(current));
+                current.clear();
+            }
+            current.add(cueText);
+            if (ssmlSize(current) > GOOGLE_TTS_INPUT_LIMIT) {
+                throw new IllegalArgumentException(
+                        "A subtitle cue exceeds Google TTS's 5,000-byte request limit.");
+            }
+        }
+
+        if (!current.isEmpty()) {
+            batches.add(List.copyOf(current));
+        }
+        return List.copyOf(batches);
+    }
+
+    private int ssmlSize(List<String> cueTexts) {
+        return buildSsml(cueTexts).getBytes(StandardCharsets.UTF_8).length;
     }
 
     public Path resolveOutputFile(String filename) throws IOException {

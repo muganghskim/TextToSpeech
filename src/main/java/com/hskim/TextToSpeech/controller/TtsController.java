@@ -2,7 +2,9 @@ package com.hskim.TextToSpeech.controller;
 
 import com.hskim.TextToSpeech.model.TtsRequest;
 import com.hskim.TextToSpeech.model.TtsResult;
+import com.hskim.TextToSpeech.model.VideoProjectRequest;
 import com.hskim.TextToSpeech.service.TtsService;
+import com.hskim.TextToSpeech.service.VideoProjectTtsService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -27,9 +29,11 @@ import java.nio.file.Path;
 public class TtsController {
 
     private final TtsService ttsService;
+    private final VideoProjectTtsService videoProjectTtsService;
 
-    public TtsController(TtsService ttsService) {
+    public TtsController(TtsService ttsService, VideoProjectTtsService videoProjectTtsService) {
         this.ttsService = ttsService;
+        this.videoProjectTtsService = videoProjectTtsService;
     }
 
     @PostMapping("/convert-to-audio")
@@ -46,6 +50,11 @@ public class TtsController {
     @PostMapping(value = "/synthesize", consumes = MediaType.APPLICATION_JSON_VALUE)
     public TtsResult synthesize(@RequestBody TtsRequest request) throws IOException {
         return ttsService.convertTextToAudio(request);
+    }
+
+    @PostMapping(value = "/synthesize-project", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public TtsResult synthesizeProject(@RequestBody VideoProjectRequest request) throws IOException {
+        return videoProjectTtsService.synthesize(request);
     }
 
     @GetMapping("/files/{filename:.+}")

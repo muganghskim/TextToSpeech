@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -71,5 +72,33 @@ class TtsServiceTest {
         assertThat(sent.getVoice().getName()).isEqualTo("en-US-Neural2-F");
         assertThat(sent.getEnableTimePointingList())
                 .containsExactly(SynthesizeSpeechRequest.TimepointType.SSML_MARK);
+    }
+
+    @Test
+    void splitsLongSsmlAndKeepsOneContinuousAudioAndSubtitleTimeline() throws Exception {
+        SpeechSynthesizer synthesizer = mock(SpeechSynthesizer.class);
+        when(synthesizer.synthesize(any())).thenReturn(
+                SynthesizeSpeechResponse.newBuilder()
+                        .setAudioContent(ByteString.copyFromUtf8("mp3-part"))
+                        .addTimepoints(Timepoint.newBuilder()
+                                .setMarkName("cue-end")
+                                .setTimeSeconds(1.0))
+                        .build());
+        TtsService service = new TtsService(
+                synthesizer,
+                new SubtitleSegmenter(),
+                new SrtWriter(),
+                outputDirectory.toString(),
+                "en-US-Neural2-F");
+
+        String longText = "This is a subtitle sentence that must remain readable. ".repeat(100);
+        TtsResult result = service.convertTextToAudio(
+                new TtsRequest(longText, "en-US", null, 1.0, 0.0));
+
+        verify(synthesizer, atLeast(2)).synthesize(any());
+        assertThat(Files.readString(Path.of(result.audioFile()), StandardCharsets.UTF_8))
+                .contains("mp3-partmp3-part");
+        assertThat(Files.readString(Path.of(result.subtitleFile())))
+                .contains("00:00:01,000 -->");
     }
 }
