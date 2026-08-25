@@ -86,7 +86,7 @@ The response contains unique MP3 and SRT paths and download URLs. Files are stor
 
 ### Video project JSON
 
-The project endpoint accepts a complete video-project JSON document. Unrelated metadata is ignored. The service sorts `scenes` by `order`, combines each non-blank `narration`, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, and `tts.pitch` when present.
+The project endpoint accepts a complete video-project JSON document and preserves its existing metadata. It sorts `scenes` by `order`, synthesizes each non-blank `narration` as a separate MP3, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, and `tts.pitch` when present.
 
 ```powershell
 $result = Invoke-RestMethod `
@@ -97,9 +97,26 @@ $result = Invoke-RestMethod `
 
 Invoke-WebRequest -Uri "http://localhost:8080$($result.audioUrl)" -OutFile '.\project.mp3'
 Invoke-WebRequest -Uri "http://localhost:8080$($result.subtitleUrl)" -OutFile '.\project.srt'
+Invoke-WebRequest -Uri "http://localhost:8080$($result.timedProjectUrl)" -OutFile '.\project-timed.json'
+
+$result.scenes | Format-Table `
+  sceneId, actualDurationSec, durationInFrames, differenceFromEstimateSec, timingSource, reviewStatus
 ```
 
-Only `scenes[].narration` is required. `tts.languageCode` falls back to `project.language`, then `en-US`. Long projects are automatically split below Google's per-request SSML limit and returned as one MP3 with one continuous SRT timeline.
+`tts.languageCode` falls back to `project.language`, then `en-US`, and `project.fps` falls back to 30. Long scenes are automatically split below Google's per-request SSML limit.
+
+The response and generated `*-timed.json` contain:
+
+- one MP3 per scene for frame-accurate video placement;
+- a combined preview MP3 and one continuous SRT;
+- `startSec`, `endSec`, `actualDurationSec`, `startFrame`, `endFrameExclusive`, and `durationInFrames` for every scene;
+- `differenceFromEstimateSec`, `differenceFromEstimatePercent`, and `reviewStatus` without overwriting the original `estimatedDurationSec`;
+- `GOOGLE_SSML_MARK` when Google returned the real end time, or `ESTIMATED_FALLBACK` when manual review is required;
+- `audioTiming` for total duration and frames, `videoStrategy.actualLengthSec`, and calculated YouTube chapter timestamps.
+
+A scene is marked `REVIEW` when its actual duration differs from the estimate by more than 0.5 seconds or 10%, whichever is larger. Scenes without narration, estimates, or Google timing marks receive a specific review status.
+
+Use each scene's `timing.durationInFrames` and `audio.file` in the video renderer. The combined MP3 is intended for preview or export; scene MP3 files are the synchronization source of truth.
 
 ## Test and package
 

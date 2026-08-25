@@ -13,9 +13,9 @@ import com.hskim.TextToSpeech.model.TtsResult;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
 public class TtsService {
 
     private static final int GOOGLE_TTS_INPUT_LIMIT = 5_000;
-    private static final Pattern SAFE_FILENAME = Pattern.compile("[0-9a-f-]+\\.(mp3|srt)");
+    private static final Pattern SAFE_FILENAME = Pattern.compile(
+            "[0-9a-f-]+(?:-scene-[0-9]{3}|-timed)?\\.(mp3|srt|json)");
 
     private final SpeechSynthesizer speechSynthesizer;
     private final SubtitleSegmenter subtitleSegmenter;
@@ -52,6 +53,28 @@ public class TtsService {
     }
 
     public TtsResult convertTextToAudio(TtsRequest request) throws IOException {
+        SynthesizedSpeech synthesis = synthesize(request);
+
+        String id = UUID.randomUUID().toString();
+        Path audioFile = writeBinaryOutput(id + ".mp3", synthesis.audio());
+        Path subtitleFile;
+        try {
+            subtitleFile = writeTextOutput(id + ".srt", srtWriter.write(synthesis.cues()));
+        } catch (IOException exception) {
+            Files.deleteIfExists(audioFile);
+            throw exception;
+        }
+
+        return new TtsResult(
+                id,
+                audioFile.toString(),
+                subtitleFile.toString(),
+                outputUrl(audioFile),
+                outputUrl(subtitleFile),
+                synthesis.cues().size());
+    }
+
+    SynthesizedSpeech synthesize(TtsRequest request) throws IOException {
         validate(request);
 
         String languageCode = request.effectiveLanguageCode();
@@ -60,12 +83,15 @@ public class TtsService {
         ByteArrayOutputStream audio = new ByteArrayOutputStream();
         List<SubtitleCue> cues = new ArrayList<>();
         double timelineOffset = 0.0;
+        boolean exactTiming = true;
 
         for (List<String> cueBatch : cueBatches) {
             String ssml = buildSsml(cueBatch);
             SynthesizeSpeechResponse response = speechSynthesizer.synthesize(
                     buildRequest(request, languageCode, ssml));
             audio.writeBytes(response.getAudioContent().toByteArray());
+            exactTiming &= response.getTimepointsList().stream()
+                    .anyMatch(timepoint -> "cue-end".equals(timepoint.getMarkName()));
 
             List<SubtitleCue> batchCues = createTimedCues(
                     cueBatch, response.getTimepointsList(), request.effectiveSpeakingRate());
@@ -79,25 +105,49 @@ public class TtsService {
             timelineOffset = cues.get(cues.size() - 1).endSeconds();
         }
 
-        Files.createDirectories(outputDirectory);
-        String id = UUID.randomUUID().toString();
-        Path audioFile = outputDirectory.resolve(id + ".mp3");
-        Path subtitleFile = outputDirectory.resolve(id + ".srt");
-        Files.write(audioFile, audio.toByteArray());
-        try {
-            Files.writeString(subtitleFile, srtWriter.write(cues), StandardCharsets.UTF_8);
-        } catch (IOException exception) {
-            Files.deleteIfExists(audioFile);
-            throw exception;
-        }
+        return new SynthesizedSpeech(
+                audio.toByteArray(), List.copyOf(cues), timelineOffset, exactTiming);
+    }
 
-        return new TtsResult(
-                id,
-                audioFile.toString(),
-                subtitleFile.toString(),
-                "/text/files/" + audioFile.getFileName(),
-                "/text/files/" + subtitleFile.getFileName(),
-                cues.size());
+    Path writeBinaryOutput(String filename, byte[] content) throws IOException {
+        Path file = generatedOutputPath(filename);
+        Files.write(file, content);
+        return file;
+    }
+
+    Path writeTextOutput(String filename, String content) throws IOException {
+        Path file = generatedOutputPath(filename);
+        Files.writeString(file, content, StandardCharsets.UTF_8);
+        return file;
+    }
+
+    String outputUrl(Path file) {
+        return "/text/files/" + file.getFileName();
+    }
+
+    Path outputPath(String filename) {
+        if (!SAFE_FILENAME.matcher(filename).matches()) {
+            throw new IllegalArgumentException("Invalid output filename.");
+        }
+        return outputDirectory.resolve(filename).normalize();
+    }
+
+    String effectiveVoiceName(TtsRequest request) {
+        if (request.voiceName() != null && !request.voiceName().isBlank()) {
+            return request.voiceName().strip();
+        }
+        if (request.effectiveLanguageCode().equalsIgnoreCase("en-US")) {
+            return defaultEnglishVoice;
+        }
+        return "";
+    }
+
+    private Path generatedOutputPath(String filename) throws IOException {
+        if (!SAFE_FILENAME.matcher(filename).matches()) {
+            throw new IllegalArgumentException("Invalid output filename.");
+        }
+        Files.createDirectories(outputDirectory);
+        return outputPath(filename);
     }
 
     private List<List<String>> partitionCues(List<String> cueTexts) {
@@ -156,10 +206,9 @@ public class TtsService {
     private SynthesizeSpeechRequest buildRequest(TtsRequest request, String languageCode, String ssml) {
         VoiceSelectionParams.Builder voice = VoiceSelectionParams.newBuilder()
                 .setLanguageCode(languageCode);
-        if (request.voiceName() != null && !request.voiceName().isBlank()) {
-            voice.setName(request.voiceName().strip());
-        } else if (languageCode.equalsIgnoreCase("en-US") && !defaultEnglishVoice.isBlank()) {
-            voice.setName(defaultEnglishVoice);
+        String voiceName = effectiveVoiceName(request);
+        if (!voiceName.isBlank()) {
+            voice.setName(voiceName);
         }
 
         return SynthesizeSpeechRequest.newBuilder()

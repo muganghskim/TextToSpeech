@@ -2,7 +2,7 @@ package com.hskim.TextToSpeech.controller;
 
 import com.hskim.TextToSpeech.model.TtsRequest;
 import com.hskim.TextToSpeech.model.TtsResult;
-import com.hskim.TextToSpeech.model.VideoProjectRequest;
+import com.hskim.TextToSpeech.model.VideoProjectTtsResult;
 import com.hskim.TextToSpeech.service.TtsService;
 import com.hskim.TextToSpeech.service.VideoProjectTtsService;
 import org.springframework.core.io.FileSystemResource;
@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import tools.jackson.databind.node.ObjectNode;
 
 @RestController
 @RequestMapping("/text")
@@ -53,16 +54,21 @@ public class TtsController {
     }
 
     @PostMapping(value = "/synthesize-project", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public TtsResult synthesizeProject(@RequestBody VideoProjectRequest request) throws IOException {
+    public VideoProjectTtsResult synthesizeProject(@RequestBody ObjectNode request) throws IOException {
         return videoProjectTtsService.synthesize(request);
     }
 
     @GetMapping("/files/{filename:.+}")
     public ResponseEntity<Resource> download(@PathVariable String filename) throws IOException {
         Path file = ttsService.resolveOutputFile(filename);
-        MediaType mediaType = filename.endsWith(".srt")
-                ? MediaType.parseMediaType("application/x-subrip")
-                : MediaType.parseMediaType("audio/mpeg");
+        MediaType mediaType;
+        if (filename.endsWith(".srt")) {
+            mediaType = MediaType.parseMediaType("application/x-subrip");
+        } else if (filename.endsWith(".json")) {
+            mediaType = MediaType.APPLICATION_JSON;
+        } else {
+            mediaType = MediaType.parseMediaType("audio/mpeg");
+        }
 
         return ResponseEntity.ok()
                 .contentType(mediaType)
