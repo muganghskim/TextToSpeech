@@ -5,6 +5,7 @@ import com.hskim.TextToSpeech.model.SubtitleCue;
 import com.hskim.TextToSpeech.model.TtsRequest;
 import com.hskim.TextToSpeech.model.VideoProjectTtsResult;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -31,17 +32,31 @@ public class VideoProjectTtsService {
     private final TtsService ttsService;
     private final SrtWriter srtWriter;
     private final ObjectMapper objectMapper;
+    private final String defaultKoreanVoice;
 
     public VideoProjectTtsService(
             TtsService ttsService,
             SrtWriter srtWriter,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            @Value("${tts.default-korean-voice:ko-KR-Standard-C}") String defaultKoreanVoice) {
         this.ttsService = ttsService;
         this.srtWriter = srtWriter;
         this.objectMapper = objectMapper;
+        this.defaultKoreanVoice = defaultKoreanVoice.strip();
     }
 
     public VideoProjectTtsResult synthesize(ObjectNode request) throws IOException {
+        return synthesize(request, null, null);
+    }
+
+    public VideoProjectTtsResult synthesizeKorean(ObjectNode request) throws IOException {
+        return synthesize(request, "ko-KR", defaultKoreanVoice);
+    }
+
+    private VideoProjectTtsResult synthesize(
+            ObjectNode request,
+            String forcedLanguageCode,
+            String forcedVoiceName) throws IOException {
         ObjectNode timedProject = request == null ? null : request.deepCopy();
         if (timedProject == null) {
             throw new IllegalArgumentException("The video project JSON body is required.");
@@ -53,7 +68,7 @@ public class VideoProjectTtsService {
         }
 
         int fps = readFps(timedProject);
-        TtsRequest baseRequest = readTtsRequest(timedProject);
+        TtsRequest baseRequest = readTtsRequest(timedProject, forcedLanguageCode, forcedVoiceName);
         String projectId = textAt(timedProject.path("project"), "id");
         if (projectId == null) {
             projectId = "video-project";
@@ -243,16 +258,20 @@ public class VideoProjectTtsService {
         return fps;
     }
 
-    private TtsRequest readTtsRequest(ObjectNode project) {
+    private TtsRequest readTtsRequest(
+            ObjectNode project,
+            String forcedLanguageCode,
+            String forcedVoiceName) {
         JsonNode tts = project.path("tts");
         String languageCode = firstNonBlank(
+                forcedLanguageCode,
                 textAt(tts, "languageCode"),
                 textAt(project.path("project"), "language"),
                 "en-US");
         return new TtsRequest(
                 "project-placeholder",
                 languageCode,
-                textAt(tts, "voiceName"),
+                forcedVoiceName == null ? textAt(tts, "voiceName") : forcedVoiceName,
                 nullableDoubleAt(tts, "speakingRate"),
                 nullableDoubleAt(tts, "pitch"));
     }
@@ -330,6 +349,14 @@ public class VideoProjectTtsService {
                 .filter(scene -> "ESTIMATED_FALLBACK".equals(scene.timingSource()))
                 .count());
         project.set("audioTiming", timing);
+
+        JsonNode ttsNode = project.get("tts");
+        ObjectNode appliedTts = ttsNode instanceof ObjectNode existingTts
+                ? existingTts
+                : objectMapper.createObjectNode();
+        appliedTts.put("languageCode", request.effectiveLanguageCode());
+        appliedTts.put("voiceName", ttsService.effectiveVoiceName(request));
+        project.set("tts", appliedTts);
 
         ObjectNode outputs = objectMapper.createObjectNode();
         outputs.put("combinedAudioFile", combinedAudioName);

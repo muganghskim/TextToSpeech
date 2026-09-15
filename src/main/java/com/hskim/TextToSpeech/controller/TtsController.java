@@ -58,6 +58,11 @@ public class TtsController {
         return videoProjectTtsService.synthesize(request);
     }
 
+    @PostMapping(value = "/synthesize-project2", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public VideoProjectTtsResult synthesizeProject2(@RequestBody ObjectNode request) throws IOException {
+        return videoProjectTtsService.synthesizeKorean(request);
+    }
+
     @GetMapping("/files/{filename:.+}")
     public ResponseEntity<Resource> download(@PathVariable String filename) throws IOException {
         Path file = ttsService.resolveOutputFile(filename);

@@ -45,6 +45,8 @@ $env:TTS_DEFAULT_ENGLISH_VOICE='en-US-Neural2-J'
 
 You can also pass `voiceName` in each JSON request. Chirp 3 HD is newer, but it does not currently support `<mark>` timepoints, so it is not recommended when accurate SRT synchronization is required.
 
+The Korean project endpoint uses `ko-KR-Standard-C` by default. Google lists this as a male Korean Standard voice; Standard voices have the larger monthly free tier. Override it with `TTS_DEFAULT_KOREAN_VOICE` if needed.
+
 ## Run
 
 ```powershell
@@ -102,6 +104,18 @@ Invoke-WebRequest -Uri "http://localhost:8080$($result.timedProjectUrl)" -OutFil
 $result.scenes | Format-Table `
   sceneId, actualDurationSec, durationInFrames, differenceFromEstimateSec, timingSource, reviewStatus
 ```
+
+For Korean narration with the default free-tier male voice, use the separate endpoint:
+
+```powershell
+$result = Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://localhost:8080/text/synthesize-project2' `
+  -ContentType 'application/json' `
+  -InFile 'C:\path\to\video_project.json'
+```
+
+This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even if the input JSON contains another language or voice. The speaking rate and pitch from the JSON are still used.
 
 `tts.languageCode` falls back to `project.language`, then `en-US`, and `project.fps` falls back to 30. Long scenes are automatically split below Google's per-request SSML limit.
 

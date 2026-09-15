@@ -44,7 +44,7 @@ class VideoProjectTtsServiceTest {
                 "en-US-Neural2-F");
         ObjectMapper objectMapper = JsonMapper.builder().build();
         VideoProjectTtsService service = new VideoProjectTtsService(
-                ttsService, srtWriter, objectMapper);
+                ttsService, srtWriter, objectMapper, "ko-KR-Standard-C");
 
         ObjectNode input = (ObjectNode) objectMapper.readTree("""
                 {
@@ -105,6 +105,38 @@ class VideoProjectTtsServiceTest {
                     assertThat(request.getVoice().getName()).isEqualTo("en-US-Neural2-F");
                     assertThat(request.getAudioConfig().getSpeakingRate()).isEqualTo(1.02);
                 });
+    }
+
+    @Test
+    void koreanProjectEndpointForcesKoreanStandardMaleVoice() throws Exception {
+        SpeechSynthesizer synthesizer = mock(SpeechSynthesizer.class);
+        when(synthesizer.synthesize(any())).thenReturn(response("audio", 1.0));
+        SrtWriter srtWriter = new SrtWriter();
+        TtsService ttsService = new TtsService(
+                synthesizer,
+                new SubtitleSegmenter(),
+                srtWriter,
+                outputDirectory.toString(),
+                "en-US-Neural2-F");
+        ObjectMapper objectMapper = JsonMapper.builder().build();
+        VideoProjectTtsService service = new VideoProjectTtsService(
+                ttsService, srtWriter, objectMapper, "ko-KR-Standard-C");
+        ObjectNode input = (ObjectNode) objectMapper.readTree("""
+                {
+                  "project": {"id": "korean-project", "language": "en-US", "fps": 30},
+                  "tts": {"languageCode": "en-US", "voiceName": "en-US-Neural2-F"},
+                  "scenes": [{"id": "scene-1", "order": 1,
+                    "estimatedDurationSec": 1, "narration": "무서운 이야기입니다."}]
+                }
+                """);
+
+        service.synthesizeKorean(input);
+
+        ArgumentCaptor<SynthesizeSpeechRequest> request =
+                ArgumentCaptor.forClass(SynthesizeSpeechRequest.class);
+        verify(synthesizer).synthesize(request.capture());
+        assertThat(request.getValue().getVoice().getLanguageCode()).isEqualTo("ko-KR");
+        assertThat(request.getValue().getVoice().getName()).isEqualTo("ko-KR-Standard-C");
     }
 
     private SynthesizeSpeechResponse response(String audio, double durationSeconds) {
