@@ -51,7 +51,8 @@ class VideoProjectTtsServiceTest {
                   "customMetadata": {"preserveMe": true},
                   "project": {"id": "project-id", "language": "en-GB", "fps": 30},
                   "videoStrategy": {"targetLengthSec": 10},
-                  "tts": {"languageCode": "en-US", "speakingRate": 1.02},
+                  "tts": {"languageCode": "en-US", "speakingRate": 1.02,
+                          "sentencePauseMsMin": 250, "sentencePauseMsMax": 400},
                   "scenes": [
                     {"id": "scene-2", "order": 2, "estimatedDurationSec": 5.0,
                      "narration": "Second scene."},
@@ -104,7 +105,13 @@ class VideoProjectTtsServiceTest {
                     assertThat(request.getVoice().getLanguageCode()).isEqualTo("en-US");
                     assertThat(request.getVoice().getName()).isEqualTo("en-US-Neural2-F");
                     assertThat(request.getAudioConfig().getSpeakingRate()).isEqualTo(1.02);
+                    assertThat(request.getInput().getSsml()).contains("<break time=\"325ms\"/>");
                 });
+
+        assertThat(timed.path("audioTiming").path("sentencePauseMsApplied").asDouble())
+                .isEqualTo(325.0);
+        assertThat(timed.path("tts").path("sentencePauseMsMin").asDouble()).isEqualTo(250.0);
+        assertThat(timed.path("tts").path("sentencePauseMsMax").asDouble()).isEqualTo(400.0);
     }
 
     @Test

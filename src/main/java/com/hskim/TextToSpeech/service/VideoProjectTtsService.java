@@ -103,7 +103,9 @@ public class VideoProjectTtsService {
                         baseRequest.languageCode(),
                         baseRequest.voiceName(),
                         baseRequest.speakingRate(),
-                        baseRequest.pitch()));
+                        baseRequest.pitch(),
+                        baseRequest.sentencePauseMsMin(),
+                        baseRequest.sentencePauseMsMax()));
                 sceneAudioName = outputId + "-scene-" + String.format("%03d", sceneNumber) + ".mp3";
                 sceneAudioUrl = "/text/files/" + sceneAudioName;
                 pendingAudio.add(new PendingAudio(sceneAudioName, speech.audio()));
@@ -273,7 +275,9 @@ public class VideoProjectTtsService {
                 languageCode,
                 forcedVoiceName == null ? textAt(tts, "voiceName") : forcedVoiceName,
                 nullableDoubleAt(tts, "speakingRate"),
-                nullableDoubleAt(tts, "pitch"));
+                nullableDoubleAt(tts, "pitch"),
+                nullableDoubleAt(tts, "sentencePauseMsMin"),
+                nullableDoubleAt(tts, "sentencePauseMsMax"));
     }
 
     private void writeSceneTiming(
@@ -340,6 +344,9 @@ public class VideoProjectTtsService {
         timing.put("voiceName", ttsService.effectiveVoiceName(request));
         timing.put("speakingRate", request.effectiveSpeakingRate());
         timing.put("pitch", request.effectivePitch());
+        timing.put("sentencePauseMsMin", request.effectiveSentencePauseMsMin());
+        timing.put("sentencePauseMsMax", request.effectiveSentencePauseMsMax());
+        timing.put("sentencePauseMsApplied", request.effectiveSentencePauseMs());
         timing.put("reviewThresholdSeconds", REVIEW_THRESHOLD_SECONDS);
         timing.put("reviewThresholdPercent", REVIEW_THRESHOLD_PERCENT);
         timing.put("reviewSceneCount", sceneResults.stream()
@@ -356,6 +363,8 @@ public class VideoProjectTtsService {
                 : objectMapper.createObjectNode();
         appliedTts.put("languageCode", request.effectiveLanguageCode());
         appliedTts.put("voiceName", ttsService.effectiveVoiceName(request));
+        appliedTts.put("sentencePauseMsMin", request.effectiveSentencePauseMsMin());
+        appliedTts.put("sentencePauseMsMax", request.effectiveSentencePauseMsMax());
         project.set("tts", appliedTts);
 
         ObjectNode outputs = objectMapper.createObjectNode();

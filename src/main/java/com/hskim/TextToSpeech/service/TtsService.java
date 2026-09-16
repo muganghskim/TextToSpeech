@@ -79,14 +79,14 @@ public class TtsService {
 
         String languageCode = request.effectiveLanguageCode();
         List<String> cueTexts = subtitleSegmenter.segment(request.text(), languageCode);
-        List<List<String>> cueBatches = partitionCues(cueTexts);
+        List<List<String>> cueBatches = partitionCues(cueTexts, request);
         ByteArrayOutputStream audio = new ByteArrayOutputStream();
         List<SubtitleCue> cues = new ArrayList<>();
         double timelineOffset = 0.0;
         boolean exactTiming = true;
 
         for (List<String> cueBatch : cueBatches) {
-            String ssml = buildSsml(cueBatch);
+            String ssml = buildSsml(cueBatch, request);
             SynthesizeSpeechResponse response = speechSynthesizer.synthesize(
                     buildRequest(request, languageCode, ssml));
             audio.writeBytes(response.getAudioContent().toByteArray());
@@ -150,19 +150,19 @@ public class TtsService {
         return outputPath(filename);
     }
 
-    private List<List<String>> partitionCues(List<String> cueTexts) {
+    private List<List<String>> partitionCues(List<String> cueTexts, TtsRequest request) {
         List<List<String>> batches = new ArrayList<>();
         List<String> current = new ArrayList<>();
 
         for (String cueText : cueTexts) {
             List<String> candidate = new ArrayList<>(current);
             candidate.add(cueText);
-            if (!current.isEmpty() && ssmlSize(candidate) > GOOGLE_TTS_INPUT_LIMIT) {
+            if (!current.isEmpty() && ssmlSize(candidate, request) > GOOGLE_TTS_INPUT_LIMIT) {
                 batches.add(List.copyOf(current));
                 current.clear();
             }
             current.add(cueText);
-            if (ssmlSize(current) > GOOGLE_TTS_INPUT_LIMIT) {
+            if (ssmlSize(current, request) > GOOGLE_TTS_INPUT_LIMIT) {
                 throw new IllegalArgumentException(
                         "A subtitle cue exceeds Google TTS's 5,000-byte request limit.");
             }
@@ -174,8 +174,8 @@ public class TtsService {
         return List.copyOf(batches);
     }
 
-    private int ssmlSize(List<String> cueTexts) {
-        return buildSsml(cueTexts).getBytes(StandardCharsets.UTF_8).length;
+    private int ssmlSize(List<String> cueTexts, TtsRequest request) {
+        return buildSsml(cueTexts, request).getBytes(StandardCharsets.UTF_8).length;
     }
 
     public Path resolveOutputFile(String filename) throws IOException {
@@ -201,6 +201,12 @@ public class TtsService {
         if (pitch < -20.0 || pitch > 20.0) {
             throw new IllegalArgumentException("pitch must be between -20.0 and 20.0.");
         }
+        double pauseMin = request.effectiveSentencePauseMsMin();
+        double pauseMax = request.effectiveSentencePauseMsMax();
+        if (pauseMin < 0.0 || pauseMax < pauseMin || pauseMax > 5_000.0) {
+            throw new IllegalArgumentException(
+                    "sentencePauseMsMin/max must be between 0 and 5000, with min <= max.");
+        }
     }
 
     private SynthesizeSpeechRequest buildRequest(TtsRequest request, String languageCode, String ssml) {
@@ -223,17 +229,34 @@ public class TtsService {
                 .build();
     }
 
-    private String buildSsml(List<String> cueTexts) {
+    private String buildSsml(List<String> cueTexts, TtsRequest request) {
         StringBuilder ssml = new StringBuilder("<speak>");
         for (int index = 0; index < cueTexts.size(); index++) {
             if (index > 0) {
                 ssml.append("<mark name=\"cue-").append(index + 1).append("\"/>");
             }
-            ssml.append(escapeXml(cueTexts.get(index))).append(' ');
+            ssml.append(escapeXml(cueTexts.get(index)));
+            if (isSentenceEnd(cueTexts.get(index))) {
+                double pauseMs = request.effectiveSentencePauseMs();
+                if (pauseMs > 0.0) {
+                    ssml.append("<break time=\"")
+                            .append(Math.round(pauseMs))
+                            .append("ms\"/>");
+                }
+            }
+            ssml.append(' ');
         }
         // The tiny trailing break ensures audio exists after the final timing mark.
         ssml.append("<mark name=\"cue-end\"/><break time=\"1ms\"/></speak>");
         return ssml.toString();
+    }
+
+    private boolean isSentenceEnd(String text) {
+        String value = text.strip();
+        while (!value.isEmpty() && "\"'”’)]}»".indexOf(value.charAt(value.length() - 1)) >= 0) {
+            value = value.substring(0, value.length() - 1).stripTrailing();
+        }
+        return !value.isEmpty() && ".!?。！？".indexOf(value.charAt(value.length() - 1)) >= 0;
     }
 
     private String escapeXml(String value) {

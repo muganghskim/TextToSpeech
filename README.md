@@ -88,7 +88,7 @@ The response contains unique MP3 and SRT paths and download URLs. Files are stor
 
 ### Video project JSON
 
-The project endpoint accepts a complete video-project JSON document and preserves its existing metadata. It sorts `scenes` by `order`, synthesizes each non-blank `narration` as a separate MP3, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, and `tts.pitch` when present.
+The project endpoint accepts a complete video-project JSON document and preserves its existing metadata. It sorts `scenes` by `order`, synthesizes each non-blank `narration` as a separate MP3, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, `tts.pitch`, `tts.sentencePauseMsMin`, and `tts.sentencePauseMsMax` when present. Sentence-ending cues receive a deterministic pause equal to the midpoint of the configured min/max values.
 
 ```powershell
 $result = Invoke-RestMethod `
@@ -115,7 +115,7 @@ $result = Invoke-RestMethod `
   -InFile 'C:\path\to\video_project.json'
 ```
 
-This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even if the input JSON contains another language or voice. The speaking rate and pitch from the JSON are still used.
+This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even if the input JSON contains another language or voice. The speaking rate, pitch, and sentence pause settings from the JSON are still used.
 
 `tts.languageCode` falls back to `project.language`, then `en-US`, and `project.fps` falls back to 30. Long scenes are automatically split below Google's per-request SSML limit.
 
@@ -127,6 +127,7 @@ The response and generated `*-timed.json` contain:
 - `differenceFromEstimateSec`, `differenceFromEstimatePercent`, and `reviewStatus` without overwriting the original `estimatedDurationSec`;
 - `GOOGLE_SSML_MARK` when Google returned the real end time, or `ESTIMATED_FALLBACK` when manual review is required;
 - `audioTiming` for total duration and frames, `videoStrategy.actualLengthSec`, and calculated YouTube chapter timestamps.
+- `audioTiming.sentencePauseMsApplied` records the midpoint pause used for reproducible synthesis; the original min/max settings are preserved in the timed `tts` object.
 
 A scene is marked `REVIEW` when its actual duration differs from the estimate by more than 0.5 seconds or 10%, whichever is larger. Scenes without narration, estimates, or Google timing marks receive a specific review status.
 

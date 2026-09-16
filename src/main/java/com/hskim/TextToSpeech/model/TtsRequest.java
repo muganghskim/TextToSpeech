@@ -5,7 +5,18 @@ public record TtsRequest(
         String languageCode,
         String voiceName,
         Double speakingRate,
-        Double pitch) {
+        Double pitch,
+        Double sentencePauseMsMin,
+        Double sentencePauseMsMax) {
+
+    public TtsRequest(
+            String text,
+            String languageCode,
+            String voiceName,
+            Double speakingRate,
+            Double pitch) {
+        this(text, languageCode, voiceName, speakingRate, pitch, null, null);
+    }
 
     public String effectiveLanguageCode() {
         return languageCode == null || languageCode.isBlank() ? "en-US" : languageCode.strip();
@@ -17,5 +28,17 @@ public record TtsRequest(
 
     public double effectivePitch() {
         return pitch == null ? 0.0 : pitch;
+    }
+
+    public double effectiveSentencePauseMsMin() {
+        return sentencePauseMsMin == null ? 0.0 : sentencePauseMsMin;
+    }
+
+    public double effectiveSentencePauseMsMax() {
+        return sentencePauseMsMax == null ? effectiveSentencePauseMsMin() : sentencePauseMsMax;
+    }
+
+    public double effectiveSentencePauseMs() {
+        return (effectiveSentencePauseMsMin() + effectiveSentencePauseMsMax()) / 2.0;
     }
 }
