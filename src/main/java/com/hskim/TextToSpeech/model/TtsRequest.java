@@ -1,5 +1,7 @@
 package com.hskim.TextToSpeech.model;
 
+import java.util.List;
+
 public record TtsRequest(
         String text,
         String languageCode,
@@ -7,7 +9,12 @@ public record TtsRequest(
         Double speakingRate,
         Double pitch,
         Double sentencePauseMsMin,
-        Double sentencePauseMsMax) {
+        Double sentencePauseMsMax,
+        List<Double> sentencePauseMs) {
+
+    public TtsRequest {
+        sentencePauseMs = sentencePauseMs == null ? List.of() : List.copyOf(sentencePauseMs);
+    }
 
     public TtsRequest(
             String text,
@@ -15,7 +22,19 @@ public record TtsRequest(
             String voiceName,
             Double speakingRate,
             Double pitch) {
-        this(text, languageCode, voiceName, speakingRate, pitch, null, null);
+        this(text, languageCode, voiceName, speakingRate, pitch, null, null, null);
+    }
+
+    public TtsRequest(
+            String text,
+            String languageCode,
+            String voiceName,
+            Double speakingRate,
+            Double pitch,
+            Double sentencePauseMsMin,
+            Double sentencePauseMsMax) {
+        this(text, languageCode, voiceName, speakingRate, pitch,
+                sentencePauseMsMin, sentencePauseMsMax, null);
     }
 
     public String effectiveLanguageCode() {
@@ -40,5 +59,12 @@ public record TtsRequest(
 
     public double effectiveSentencePauseMs() {
         return (effectiveSentencePauseMsMin() + effectiveSentencePauseMsMax()) / 2.0;
+    }
+
+    public double effectiveSentencePauseMs(int sentenceIndex) {
+        if (sentenceIndex >= 0 && sentenceIndex < sentencePauseMs.size()) {
+            return sentencePauseMs.get(sentenceIndex);
+        }
+        return effectiveSentencePauseMs();
     }
 }

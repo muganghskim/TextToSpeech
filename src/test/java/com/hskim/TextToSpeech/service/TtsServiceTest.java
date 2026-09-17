@@ -13,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -100,5 +101,38 @@ class TtsServiceTest {
                 .contains("mp3-partmp3-part");
         assertThat(Files.readString(Path.of(result.subtitleFile())))
                 .contains("00:00:01,000 -->");
+    }
+
+    @Test
+    void appliesSceneSentencePauseValuesInOrder() throws Exception {
+        SpeechSynthesizer synthesizer = mock(SpeechSynthesizer.class);
+        when(synthesizer.synthesize(any())).thenReturn(
+                SynthesizeSpeechResponse.newBuilder()
+                        .setAudioContent(ByteString.copyFromUtf8("fake-mp3"))
+                        .addTimepoints(Timepoint.newBuilder().setMarkName("cue-end").setTimeSeconds(3.0))
+                        .build());
+        TtsService service = new TtsService(
+                synthesizer,
+                new SubtitleSegmenter(),
+                new SrtWriter(),
+                outputDirectory.toString(),
+                "en-US-Neural2-F");
+
+        service.convertTextToAudio(new TtsRequest(
+                "First sentence. Second sentence.",
+                "en-US",
+                null,
+                1.0,
+                0.0,
+                null,
+                null,
+                List.of(270.0, 300.0)));
+
+        ArgumentCaptor<SynthesizeSpeechRequest> captor =
+                ArgumentCaptor.forClass(SynthesizeSpeechRequest.class);
+        verify(synthesizer).synthesize(captor.capture());
+        assertThat(captor.getValue().getInput().getSsml())
+                .contains("<break time=\"270ms\"/>")
+                .contains("<break time=\"300ms\"/>");
     }
 }

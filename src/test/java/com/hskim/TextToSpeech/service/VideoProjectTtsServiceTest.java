@@ -133,7 +133,8 @@ class VideoProjectTtsServiceTest {
                   "project": {"id": "korean-project", "language": "en-US", "fps": 30},
                   "tts": {"languageCode": "en-US", "voiceName": "en-US-Neural2-F"},
                   "scenes": [{"id": "scene-1", "order": 1,
-                    "estimatedDurationSec": 1, "narration": "무서운 이야기입니다."}]
+                    "estimatedDurationSec": 1, "narration": "무서운 이야기입니다.",
+                    "sentencePauseMs": [270]}]
                 }
                 """);
 
@@ -144,6 +145,7 @@ class VideoProjectTtsServiceTest {
         verify(synthesizer).synthesize(request.capture());
         assertThat(request.getValue().getVoice().getLanguageCode()).isEqualTo("ko-KR");
         assertThat(request.getValue().getVoice().getName()).isEqualTo("ko-KR-Standard-C");
+        assertThat(request.getValue().getInput().getSsml()).contains("<break time=\"270ms\"/>");
     }
 
     private SynthesizeSpeechResponse response(String audio, double durationSeconds) {

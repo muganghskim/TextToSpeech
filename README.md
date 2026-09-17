@@ -88,7 +88,7 @@ The response contains unique MP3 and SRT paths and download URLs. Files are stor
 
 ### Video project JSON
 
-The project endpoint accepts a complete video-project JSON document and preserves its existing metadata. It sorts `scenes` by `order`, synthesizes each non-blank `narration` as a separate MP3, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, `tts.pitch`, `tts.sentencePauseMsMin`, and `tts.sentencePauseMsMax` when present. Sentence-ending cues receive a deterministic pause equal to the midpoint of the configured min/max values.
+The project endpoint accepts a complete video-project JSON document and preserves its existing metadata. It sorts `scenes` by `order`, synthesizes each non-blank `narration` as a separate MP3, and applies `tts.languageCode`, `tts.voiceName`, `tts.speakingRate`, `tts.pitch`, `tts.sentencePauseMsMin`, and `tts.sentencePauseMsMax` when present. A scene-level `sentencePauseMs` array takes precedence and applies one value to each sentence ending in that scene, in order. If the array is shorter than the number of sentences, the remaining sentences use the root `tts` midpoint pause.
 
 ```powershell
 $result = Invoke-RestMethod `
@@ -128,6 +128,7 @@ The response and generated `*-timed.json` contain:
 - `GOOGLE_SSML_MARK` when Google returned the real end time, or `ESTIMATED_FALLBACK` when manual review is required;
 - `audioTiming` for total duration and frames, `videoStrategy.actualLengthSec`, and calculated YouTube chapter timestamps.
 - `audioTiming.sentencePauseMsApplied` records the midpoint pause used for reproducible synthesis; the original min/max settings are preserved in the timed `tts` object.
+- Each scene's `timing.sentencePauseMsApplied` and `timing.sentencePauseMode` show the scene-level pause values used (`scene` or `tts-default`).
 
 A scene is marked `REVIEW` when its actual duration differs from the estimate by more than 0.5 seconds or 10%, whichever is larger. Scenes without narration, estimates, or Google timing marks receive a specific review status.
 

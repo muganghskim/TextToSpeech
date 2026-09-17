@@ -105,7 +105,8 @@ public class VideoProjectTtsService {
                         baseRequest.speakingRate(),
                         baseRequest.pitch(),
                         baseRequest.sentencePauseMsMin(),
-                        baseRequest.sentencePauseMsMax()));
+                        baseRequest.sentencePauseMsMax(),
+                        scene.sentencePauseMs()));
                 sceneAudioName = outputId + "-scene-" + String.format("%03d", sceneNumber) + ".mp3";
                 sceneAudioUrl = "/text/files/" + sceneAudioName;
                 pendingAudio.add(new PendingAudio(sceneAudioName, speech.audio()));
@@ -145,6 +146,7 @@ public class VideoProjectTtsService {
                     endFrame,
                     difference,
                     scene.estimatedDurationSec(),
+                    scene.sentencePauseMs(),
                     timingSource,
                     reviewStatus,
                     sceneAudioName,
@@ -238,13 +240,15 @@ public class VideoProjectTtsService {
             }
             String narration = textAt(scene, "narration");
             double estimatedDuration = doubleAt(scene, "estimatedDurationSec", 0.0);
+            List<Double> sentencePauseMs = nullableDoubleListAt(scene, "sentencePauseMs");
             scenes.add(new SceneWork(
                     scene,
                     sceneId,
                     order,
                     index,
                     narration == null ? "" : narration.strip(),
-                    estimatedDuration));
+                    estimatedDuration,
+                    sentencePauseMs));
         }
 
         scenes.sort(Comparator.comparingInt(SceneWork::order)
@@ -289,6 +293,7 @@ public class VideoProjectTtsService {
             int endFrame,
             double difference,
             double estimatedDuration,
+            List<Double> sentencePauseMs,
             String timingSource,
             String reviewStatus,
             String sceneAudioName,
@@ -308,6 +313,10 @@ public class VideoProjectTtsService {
             timing.putNull("differenceFromEstimatePercent");
         }
         timing.put("reviewStatus", reviewStatus);
+        ArrayNode appliedPauses = objectMapper.createArrayNode();
+        sentencePauseMs.forEach(appliedPauses::add);
+        timing.set("sentencePauseMsApplied", appliedPauses);
+        timing.put("sentencePauseMode", sentencePauseMs.isEmpty() ? "tts-default" : "scene");
         scene.set("timing", timing);
 
         ObjectNode audio = objectMapper.createObjectNode();
@@ -475,6 +484,24 @@ public class VideoProjectTtsService {
         return value != null && value.isNumber() ? value.asDouble() : null;
     }
 
+    private List<Double> nullableDoubleListAt(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        if (value == null || value.isNull()) {
+            return List.of();
+        }
+        if (!(value instanceof ArrayNode array)) {
+            throw new IllegalArgumentException(field + " must be an array of numbers.");
+        }
+        List<Double> values = new ArrayList<>();
+        for (JsonNode item : array) {
+            if (!item.isNumber()) {
+                throw new IllegalArgumentException(field + " must contain only numbers.");
+            }
+            values.add(item.asDouble());
+        }
+        return List.copyOf(values);
+    }
+
     private double roundMillis(double value) {
         return Math.round(value * 1_000.0) / 1_000.0;
     }
@@ -485,7 +512,8 @@ public class VideoProjectTtsService {
             int order,
             int originalIndex,
             String narration,
-            double estimatedDurationSec) {
+            double estimatedDurationSec,
+            List<Double> sentencePauseMs) {
     }
 
     private record PendingAudio(String filename, byte[] content) {
