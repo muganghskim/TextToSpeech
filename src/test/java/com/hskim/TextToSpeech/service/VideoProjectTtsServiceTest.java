@@ -148,12 +148,64 @@ class VideoProjectTtsServiceTest {
         assertThat(request.getValue().getInput().getSsml()).contains("<break time=\"270ms\"/>");
     }
 
+    @Test
+    void alignsTheNextSceneToTheEncodedMp3Duration() throws Exception {
+        SpeechSynthesizer synthesizer = mock(SpeechSynthesizer.class);
+        when(synthesizer.synthesize(any()))
+                .thenReturn(response(mpeg2Layer3Frames(5), 0.1))
+                .thenReturn(response(mpeg2Layer3Frames(5), 0.1));
+        SrtWriter srtWriter = new SrtWriter();
+        TtsService ttsService = new TtsService(
+                synthesizer,
+                new SubtitleSegmenter(),
+                srtWriter,
+                outputDirectory.toString(),
+                "en-US-Neural2-F");
+        ObjectMapper objectMapper = JsonMapper.builder().build();
+        VideoProjectTtsService service = new VideoProjectTtsService(
+                ttsService, srtWriter, objectMapper, "ko-KR-Standard-C");
+        ObjectNode input = (ObjectNode) objectMapper.readTree("""
+                {
+                  "project": {"id": "project-id", "fps": 30},
+                  "scenes": [
+                    {"id": "scene-1", "order": 1, "narration": "First."},
+                    {"id": "scene-2", "order": 2, "narration": "Second."}
+                  ]
+                }
+                """);
+
+        VideoProjectTtsResult result = service.synthesize(input);
+
+        // Five MPEG-2 Layer III frames at 24 kHz are 120 ms, even though
+        // the last SSML mark is at 100 ms.
+        assertThat(result.actualTotalDurationSec()).isEqualTo(0.24);
+        assertThat(result.scenes().get(1).startSec()).isEqualTo(0.12);
+        assertThat(Files.readString(Path.of(result.subtitleFile())))
+                .contains("00:00:00,120 --> 00:00:00,220");
+    }
+
     private SynthesizeSpeechResponse response(String audio, double durationSeconds) {
+        return response(audio.getBytes(StandardCharsets.UTF_8), durationSeconds);
+    }
+
+    private SynthesizeSpeechResponse response(byte[] audio, double durationSeconds) {
         return SynthesizeSpeechResponse.newBuilder()
-                .setAudioContent(ByteString.copyFromUtf8(audio))
+                .setAudioContent(ByteString.copyFrom(audio))
                 .addTimepoints(Timepoint.newBuilder()
                         .setMarkName("cue-end")
                         .setTimeSeconds(durationSeconds))
                 .build();
+    }
+
+    private byte[] mpeg2Layer3Frames(int count) {
+        byte[] audio = new byte[count * 192];
+        for (int index = 0; index < count; index++) {
+            int offset = index * 192;
+            audio[offset] = (byte) 0xff;
+            audio[offset + 1] = (byte) 0xf3;
+            audio[offset + 2] = (byte) 0x84;
+            audio[offset + 3] = 0;
+        }
+        return audio;
     }
 }

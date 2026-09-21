@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalDouble;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -82,7 +83,7 @@ public class TtsService {
         List<List<String>> cueBatches = partitionCues(cueTexts, request);
         ByteArrayOutputStream audio = new ByteArrayOutputStream();
         List<SubtitleCue> cues = new ArrayList<>();
-        double timelineOffset = 0.0;
+        double playbackTimelineOffset = 0.0;
         boolean exactTiming = true;
         int sentencePauseIndexOffset = 0;
 
@@ -100,15 +101,22 @@ public class TtsService {
                 cues.add(new SubtitleCue(
                         cues.size() + 1,
                         cue.text(),
-                        cue.startSeconds() + timelineOffset,
-                        cue.endSeconds() + timelineOffset));
+                        cue.startSeconds() + playbackTimelineOffset,
+                        cue.endSeconds() + playbackTimelineOffset));
             }
-            timelineOffset = cues.get(cues.size() - 1).endSeconds();
+            double markedDuration = batchCues.get(batchCues.size() - 1).endSeconds();
+            OptionalDouble parsedDuration = Mp3Duration.readSeconds(
+                    response.getAudioContent().toByteArray());
+            double encodedDuration = parsedDuration.isPresent()
+                    && parsedDuration.getAsDouble() >= markedDuration
+                    ? parsedDuration.getAsDouble()
+                    : markedDuration;
+            playbackTimelineOffset += encodedDuration;
             sentencePauseIndexOffset += countSentenceEnds(cueBatch);
         }
 
         return new SynthesizedSpeech(
-                audio.toByteArray(), List.copyOf(cues), timelineOffset, exactTiming);
+                audio.toByteArray(), List.copyOf(cues), playbackTimelineOffset, exactTiming);
     }
 
     Path writeBinaryOutput(String filename, byte[] content) throws IOException {
