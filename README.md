@@ -117,6 +117,50 @@ $result = Invoke-RestMethod `
 
 This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even if the input JSON contains another language or voice. The speaking rate, pitch, and sentence pause settings from the JSON are still used.
 
+### Chirp 3 HD project with multiple speakers
+
+`POST /text/synthesize-project3` reads `tts.voiceMap` and each scene's ordered `ttsSegments`. A segment's `speakerId` selects its voice. The `narration` field stays in the output as metadata; the segment text is what gets spoken. All speaker IDs must be mapped before any Google request is sent.
+
+```json
+{
+  "project": {"language": "ko-KR", "fps": 30},
+  "tts": {
+    "provider": "GOOGLE_CHIRP3_HD",
+    "speakingRate": 0.88,
+    "pitch": -3,
+    "voiceMap": {
+      "daughter": "ko-KR-Chirp3-HD-Kore",
+      "father": "ko-KR-Chirp3-HD-Orus",
+      "mother": "ko-KR-Chirp3-HD-Gacrux"
+    }
+  },
+  "scenes": [{
+    "id": "scene-01",
+    "order": 1,
+    "ttsSegments": [
+      {"speakerId": "daughter", "type": "NARRATION", "text": "아버지가 말했습니다."},
+      {"speakerId": "father", "type": "DIALOGUE", "text": "한 달만 늦추자."}
+    ]
+  }]
+}
+```
+
+```powershell
+$result = Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://localhost:8080/text/synthesize-project3' `
+  -ContentType 'application/json' `
+  -InFile 'C:\path\to\video_project.json'
+
+Invoke-WebRequest -Uri "http://localhost:8080$($result.audioUrl)" -OutFile '.\project.wav'
+Invoke-WebRequest -Uri "http://localhost:8080$($result.subtitleUrl)" -OutFile '.\project.srt'
+Invoke-WebRequest -Uri "http://localhost:8080$($result.timedProjectUrl)" -OutFile '.\project-timed.json'
+```
+
+Project3 outputs 24 kHz mono PCM WAV files, one per scene and one combined, plus SRT and `*-timed.json`. WAV sample counts provide exact segment and scene durations without requiring FFmpeg. The timed JSON adds `ttsSegments[].voiceName`, `ttsSegments[].timing`, scene timing, and measured start times for object-form YouTube chapters. Chirp 3 HD does not return `<mark>` timepoints: SRT cue starts within each segment are proportional estimates, while segment and scene boundaries are measured from audio. `audioTiming.subtitleTimingSource` records this limitation.
+
+`speakingRate` uses Chirp pace control. `pitch` is sent through Chirp's preview SSML `<prosody>` support. Scene `sentencePauseMs` values take precedence over the root min/max midpoint and are inserted as SSML `<break>` tags at sentence punctuation. Because this Chirp feature is in preview, test the final voice and pauses by listening to the WAV.
+
 `tts.languageCode` falls back to `project.language`, then `en-US`, and `project.fps` falls back to 30. Long scenes are automatically split below Google's per-request SSML limit.
 
 The response and generated `*-timed.json` contain:

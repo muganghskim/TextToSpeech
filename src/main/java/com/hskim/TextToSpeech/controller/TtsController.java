@@ -5,6 +5,7 @@ import com.hskim.TextToSpeech.model.TtsResult;
 import com.hskim.TextToSpeech.model.VideoProjectTtsResult;
 import com.hskim.TextToSpeech.service.TtsService;
 import com.hskim.TextToSpeech.service.VideoProjectTtsService;
+import com.hskim.TextToSpeech.service.ChirpProjectTtsService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -31,10 +32,13 @@ public class TtsController {
 
     private final TtsService ttsService;
     private final VideoProjectTtsService videoProjectTtsService;
+    private final ChirpProjectTtsService chirpProjectTtsService;
 
-    public TtsController(TtsService ttsService, VideoProjectTtsService videoProjectTtsService) {
+    public TtsController(TtsService ttsService, VideoProjectTtsService videoProjectTtsService,
+                         ChirpProjectTtsService chirpProjectTtsService) {
         this.ttsService = ttsService;
         this.videoProjectTtsService = videoProjectTtsService;
+        this.chirpProjectTtsService = chirpProjectTtsService;
     }
 
     @PostMapping("/convert-to-audio")
@@ -63,6 +67,11 @@ public class TtsController {
         return videoProjectTtsService.synthesizeKorean(request);
     }
 
+    @PostMapping(value = "/synthesize-project3", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public VideoProjectTtsResult synthesizeProject3(@RequestBody ObjectNode request) throws IOException {
+        return chirpProjectTtsService.synthesize(request);
+    }
+
     @GetMapping("/files/{filename:.+}")
     public ResponseEntity<Resource> download(@PathVariable String filename) throws IOException {
         Path file = ttsService.resolveOutputFile(filename);
@@ -71,6 +80,8 @@ public class TtsController {
             mediaType = MediaType.parseMediaType("application/x-subrip");
         } else if (filename.endsWith(".json")) {
             mediaType = MediaType.APPLICATION_JSON;
+        } else if (filename.endsWith(".wav")) {
+            mediaType = MediaType.parseMediaType("audio/wav");
         } else {
             mediaType = MediaType.parseMediaType("audio/mpeg");
         }

@@ -32,7 +32,7 @@ public class TtsService {
 
     private static final int GOOGLE_TTS_INPUT_LIMIT = 5_000;
     private static final Pattern SAFE_FILENAME = Pattern.compile(
-            "[0-9a-f-]+(?:-scene-[0-9]{3}|-timed)?\\.(mp3|srt|json)");
+            "[0-9a-f-]+(?:-scene-[0-9]{3}|-timed)?\\.(mp3|wav|srt|json)");
 
     private final SpeechSynthesizer speechSynthesizer;
     private final SubtitleSegmenter subtitleSegmenter;
