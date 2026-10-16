@@ -131,4 +131,60 @@ class ChirpProjectTtsServiceTest {
                 .hasMessageContaining("unmapped speakerId");
         verify(synthesizer, never()).synthesize(any());
     }
+
+    @Test
+    void usesSentenceTypePausesAndTrimsOnlyExcessSilenceAtSpeakerChanges() throws Exception {
+        SpeechSynthesizer synthesizer = mock(SpeechSynthesizer.class);
+        byte[] pcm = new byte[52_800]; // 500 ms audible + 600 ms silence
+        for (int sample = 0; sample < 12_000; sample++) {
+            pcm[sample * 2] = (byte) 0xe8;
+            pcm[sample * 2 + 1] = 0x03; // amplitude 1000
+        }
+        when(synthesizer.synthesize(any())).thenReturn(SynthesizeSpeechResponse.newBuilder()
+                .setAudioContent(ByteString.copyFrom(PcmWav.fromPcm(pcm).toBytes())).build());
+        ObjectMapper mapper = JsonMapper.builder().build();
+        SrtWriter srtWriter = new SrtWriter();
+        TtsService files = new TtsService(synthesizer, new SubtitleSegmenter(), srtWriter,
+                outputDirectory.toString(), "en-US-Neural2-F");
+        ChirpProjectTtsService service = new ChirpProjectTtsService(
+                synthesizer, new SubtitleSegmenter(), srtWriter, files, mapper);
+        ObjectNode input = (ObjectNode) mapper.readTree("""
+                {"tts": {"sentencePauseMsMin": 250, "sentencePauseMsMax": 400,
+                         "voiceMap": {"daughter": "ko-KR-Chirp3-HD-Kore",
+                                      "father": "ko-KR-Chirp3-HD-Orus"}},
+                 "scenes": [{"id": "scene-01", "ttsSegments": [
+                   {"speakerId": "daughter", "text": "왜...?"},
+                   {"speakerId": "father", "text": "그래."},
+                   {"speakerId": "father", "text": "빨리!"},
+                   {"speakerId": "daughter", "text": "알겠어."}
+                 ]}]}
+                """);
+
+        VideoProjectTtsResult result = service.synthesize(input);
+
+        assertThat(result.actualTotalDurationSec()).isEqualTo(3.85);
+        JsonNode timed = mapper.readTree(Path.of(result.timedProjectFile()).toFile());
+        JsonNode segments = timed.path("scenes").get(0).path("ttsSegments");
+        assertThat(segments.get(0).path("timing").path("speakerTransition")
+                .path("targetPauseMs").asDouble()).isEqualTo(400);
+        assertThat(segments.get(0).path("timing").path("speakerTransition")
+                .path("removedTrailingSilenceMs").asDouble()).isEqualTo(200);
+        assertThat(segments.get(1).path("timing").has("speakerTransition")).isFalse();
+        assertThat(segments.get(2).path("timing").path("speakerTransition")
+                .path("targetPauseMs").asDouble()).isEqualTo(250);
+        assertThat(segments.get(2).path("timing").path("speakerTransition")
+                .path("removedTrailingSilenceMs").asDouble()).isEqualTo(350);
+        assertThat(PcmWav.read(Files.readAllBytes(Path.of(result.audioFile()))).durationSeconds())
+                .isEqualTo(3.85);
+
+        ArgumentCaptor<SynthesizeSpeechRequest> requests =
+                ArgumentCaptor.forClass(SynthesizeSpeechRequest.class);
+        verify(synthesizer, times(4)).synthesize(requests.capture());
+        assertThat(requests.getAllValues().get(0).getInput().getSsml())
+                .contains("<break time=\"400ms\"/>");
+        assertThat(requests.getAllValues().get(1).getInput().getSsml())
+                .contains("<break time=\"325ms\"/>");
+        assertThat(requests.getAllValues().get(2).getInput().getSsml())
+                .contains("<break time=\"250ms\"/>");
+    }
 }

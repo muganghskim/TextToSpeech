@@ -9,6 +9,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
+import com.hskim.TextToSpeech.service.GeminiConfigurationException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -33,6 +34,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(RejectedExecutionException.class)
     public ResponseEntity<Map<String, String>> queueFull(RejectedExecutionException exception) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .body(Map.of("error", "Project3 queue is full. Try again after a running job finishes."));
+                .body(Map.of("error", "Synthesis queue is full. Try again after a running job finishes."));
+    }
+
+    @ExceptionHandler(GeminiConfigurationException.class)
+    public ResponseEntity<Map<String, String>> missingConfiguration(GeminiConfigurationException exception) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", exception.getMessage()));
     }
 }

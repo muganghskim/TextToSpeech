@@ -121,7 +121,7 @@ This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even
 
 `POST /text/synthesize-project3` starts a background job and returns HTTP 202 with a `jobId` and `statusUrl` immediately. Poll `GET /text/synthesize-project3/jobs/{jobId}` for `QUEUED`, `RUNNING`, `COMPLETED`, or `FAILED`. The status includes completed/total segments, percentage, current scene/segment, update time, and (when complete) the original output result with WAV/SRT/timed-JSON URLs. Console output and `logs/tts.log` contain the job ID and each segment's start/completion, plus a stack trace on failure (`TTS_LOG_FILE` overrides the log path). One project runs at a time; up to eight more can wait in the queue. Status is kept in memory for 24 hours after completion, so restarting the app clears it. `POST /text/synthesize-project3/sync` preserves the previous wait-for-result behavior.
 
-The endpoint reads `tts.voiceMap` and each scene's ordered `ttsSegments`. A segment's `speakerId` selects its voice. The `narration` field stays in the output as metadata; the segment text is what gets spoken. All speaker IDs must be mapped before any Google request is sent.
+The endpoint reads `tts.voiceMap` and each scene's ordered `ttsSegments`. A segment's `speakerId` selects its voice. The `narration` field stays in the output as metadata; the segment text is what gets spoken. All speaker IDs must be mapped before any Google request is sent. Each `ttsSegment` is one API call (unless it exceeds the request-size limit and must be split); multiple sentences inside one segment remain in one SSML request. Consecutive segments from the same speaker are not merged.
 
 ```json
 {
@@ -170,9 +170,31 @@ Invoke-WebRequest -Uri "http://localhost:8080$($result.timedProjectUrl)" -OutFil
 
 Project3 outputs 24 kHz mono PCM WAV files, one per scene and one combined, plus SRT and `*-timed.json`. WAV sample counts provide exact segment and scene durations without requiring FFmpeg. The timed JSON adds `ttsSegments[].voiceName`, `ttsSegments[].timing`, scene timing, and measured start times for object-form YouTube chapters. Chirp 3 HD does not return `<mark>` timepoints: SRT cue starts within each segment are proportional estimates, while segment and scene boundaries are measured from audio. `audioTiming.subtitleTimingSource` records this limitation.
 
-`speakingRate` uses Chirp pace control. `pitch` is sent through Chirp's preview SSML `<prosody>` support. Scene `sentencePauseMs` values take precedence over the root min/max midpoint and are inserted as SSML `<break>` tags at sentence punctuation. Because this Chirp feature is in preview, test the final voice and pauses by listening to the WAV.
+`speakingRate` uses Chirp pace control. `pitch` is sent through Chirp's preview SSML `<prosody>` support. Root `sentencePauseMsMin`/`sentencePauseMsMax` deterministically set an SSML `<break>` after each sentence: exclamation = min, period = midpoint, question or ellipsis = max. Consecutive punctuation such as `...?` counts as one sentence ending. A scene's `sentencePauseMs` array overrides these calculated values in sentence order. When the next segment has a different `speakerId`, the already-synthesized PCM's trailing silence is measured and only silence exceeding the last sentence's target pause is removed; no silence is added. Same-speaker boundaries are untouched. The timed JSON records `ttsSegments[].timing.speakerTransition` with the target, detected, and removed silence in milliseconds. This processing may shorten segment and scene durations, so timing is measured after trimming. Because Chirp SSML pause behavior is in preview, test the final voice and pauses by listening to the WAV.
 
 `tts.languageCode` falls back to `project.language`, then `en-US`, and `project.fps` falls back to 30. Long scenes are automatically split below Google's per-request SSML limit.
+
+### Gemini 3.8 Flash TTS project (`/text/synthesize-project4`)
+
+Set `GEMINI_API_KEY` in the server process environment and restart the server. This is a Google AI Studio Gemini API key, separate from the Cloud TTS ADC credentials. Do not put the key in `application.yml`, the project JSON, or a committed file. `POST /text/synthesize-project4` accepts the same project JSON as project3 and immediately returns HTTP 202 with `jobId` and `statusUrl`. Poll `GET /text/synthesize-project4/jobs/{jobId}` until `COMPLETED` or `FAILED`; the completed status's `result` has the combined WAV, SRT, and timed JSON URLs. Progress and failures are written to `logs/tts.log`. One job makes **one Gemini synthesis API request**, regardless of the number of scenes or `ttsSegments`.
+
+```powershell
+$job = Invoke-RestMethod -Method Post `
+  -Uri 'http://localhost:8080/text/synthesize-project4' `
+  -ContentType 'application/json' `
+  -InFile 'C:\path\to\video_project.json'
+
+$status = Invoke-RestMethod -Uri "http://localhost:8080$($job.statusUrl)"
+$status.status
+$status.progressPercent
+$status.result.audioUrl  # present once COMPLETED
+```
+
+The model ID is `gemini-3.8-flash-tts`. Project4 sends all ordered scene segments as annotated turns in one [two-speaker Gemini request](https://ai.google.dev/gemini-api/docs/speech-generation). Characters are grouped by gender: `father`/`dad`/`son`/`brother`/`husband` use `male`; `mother`/`mom`/`daughter`/`sister`/`wife` use `female`. Thus mother and daughter share **the same voice**, not two distinguishable character voices. For other `speakerId` values, provide `tts.geminiSpeakerMap`, such as `{"narrator":"male","grandmother":"female"}`. To select the two voices explicitly, set `tts.geminiVoices` to e.g. `{"male":"Orus","female":"Kore"}`. Otherwise project4 chooses the father's and daughter's names from `tts.geminiVoiceMap` or `tts.voiceMap` (stripping `ko-KR-Chirp3-HD-`), then falls back to Orus/Kore. Character-level `voiceMap` cannot create more than two distinct voices in this endpoint.
+
+`ttsSegments[].style` overrides root `tts.voiceStyle` as a qualitative Gemini style instruction. Numeric `speakingRate`, `pitch`, `sentencePauseMs`, and `sentencePauseMsMin`/`Max` cannot be enforced or reproduced exactly by this single-request Gemini path. The returned WAV's **total duration is measured**; segment, scene, chapter, and SRT cue boundaries are **proportional estimates**, marked `ESTIMATED_FROM_TOTAL_AUDIO` and `reviewRequired` in the timed JSON. Listen and adjust before frame-accurate video assembly. Project4 intentionally does not cut scene WAV files from uncertain boundaries.
+
+Check your current [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) and [per-project rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) in AI Studio. If your account allows ten requests per day, one project4 job uses one of them. A long script can still exceed the model's input/output limits or fail in one batch; a failed Gemini request may also count against your quota. Google documents a maximum of 16,384 audio output tokens for this model, so review especially long projects before submitting them. Free-tier content may be used to improve Google's products.
 
 The response and generated `*-timed.json` contain:
 

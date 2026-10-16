@@ -8,6 +8,8 @@ import com.google.cloud.texttospeech.v1beta1.VoiceSelectionParams;
 import com.hskim.TextToSpeech.model.SceneAudioResult;
 import com.hskim.TextToSpeech.model.SubtitleCue;
 import com.hskim.TextToSpeech.model.VideoProjectTtsResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -31,6 +33,7 @@ import java.util.UUID;
 @Service
 public class ChirpProjectTtsService {
 
+    private static final Logger log = LoggerFactory.getLogger(ChirpProjectTtsService.class);
     private static final int MAX_INPUT_BYTES = 5_000;
     private static final int SPLIT_TEXT_BYTES = 3_500;
 
@@ -95,6 +98,7 @@ public class ChirpProjectTtsService {
         int sceneNumber = 0;
         int completedSegments = 0;
         int totalSegments = scenes.stream().mapToInt(scene -> scene.segments().size()).sum();
+        List<Segment> orderedSegments = scenes.stream().flatMap(scene -> scene.segments().stream()).toList();
 
         for (Scene scene : scenes) {
             sceneNumber++;
@@ -108,22 +112,42 @@ public class ChirpProjectTtsService {
                 listener.onProgress(new Progress("STARTED", scene.id(), sceneNumber, scenes.size(),
                         segmentNumber, scene.segments().size(), completedSegments, totalSegments));
                 int segmentStartSamples = elapsedSamples;
+                ByteArrayOutputStream segmentPcm = new ByteArrayOutputStream();
+                double targetPauseMs = config.defaultPauseMs();
                 for (String part : splitLongSegment(segment.text(), config.languageCode())) {
-                    String ssml = ssml(part, config.pitch(), scene.pauseMs(),
-                            config.defaultPauseMs(), sentenceIndex);
-                    sentenceIndex += sentenceEndCount(part, config.languageCode());
-                    if (ssml.getBytes(StandardCharsets.UTF_8).length > MAX_INPUT_BYTES) {
+                    SsmlPlan plan = ssml(part, config, scene.pauseMs(), sentenceIndex);
+                    sentenceIndex += plan.sentenceCount();
+                    if (plan.lastPauseMs() != null) {
+                        targetPauseMs = plan.lastPauseMs();
+                    }
+                    if (plan.ssml().getBytes(StandardCharsets.UTF_8).length > MAX_INPUT_BYTES) {
                         throw new IllegalArgumentException("A ttsSegments item exceeds Google's 5,000-byte SSML limit.");
                     }
-                    PcmWav wav = PcmWav.read(synthesizer.synthesize(request(ssml, config, segment.voiceName()))
-                            .getAudioContent().toByteArray());
-                    scenePcm.writeBytes(wav.pcm());
-                    combinedPcm.writeBytes(wav.pcm());
-                    elapsedSamples += wav.pcm().length / 2;
+                    byte[] pcm = PcmWav.read(synthesizer.synthesize(request(plan.ssml(), config, segment.voiceName()))
+                            .getAudioContent().toByteArray()).pcm();
+                    segmentPcm.writeBytes(pcm);
                 }
+                Segment next = completedSegments + 1 < orderedSegments.size()
+                        ? orderedSegments.get(completedSegments + 1) : null;
+                boolean speakerChange = next != null && !segment.speakerId().equals(next.speakerId());
+                PcmSilenceTrimmer.Result trim = speakerChange
+                        ? PcmSilenceTrimmer.trimExcessTrailingSilence(segmentPcm.toByteArray(), targetPauseMs)
+                        : null;
+                if (trim != null) {
+                    log.info("project3 speaker transition outputId={} sceneId={} segment={} nextSpeaker={} "
+                                    + "targetMs={} detectedMs={} removedMs={}",
+                            id, scene.id(),
+                            segmentNumber, next.speakerId(),
+                            round(targetPauseMs), round(trim.detectedMs()), round(trim.removedMs()));
+                }
+                byte[] pcm = trim == null ? segmentPcm.toByteArray() : trim.pcm();
+                scenePcm.writeBytes(pcm);
+                combinedPcm.writeBytes(pcm);
+                elapsedSamples += pcm.length / 2;
                 double start = seconds(segmentStartSamples);
                 double end = seconds(elapsedSamples);
-                writeSegmentTiming(segment.node(), start, end, segment.voiceName());
+                writeSegmentTiming(segment.node(), start, end, segment.voiceName(),
+                        speakerChange ? next.speakerId() : null, targetPauseMs, trim);
                 addEstimatedCues(cues, segment.text(), config.languageCode(), start, end);
                 completedSegments++;
                 listener.onProgress(new Progress("COMPLETED", scene.id(), sceneNumber, scenes.size(),
@@ -199,16 +223,20 @@ public class ChirpProjectTtsService {
         String selectedLanguage = language;
         JsonNode mapNode = tts.path("voiceMap");
         if (!(mapNode instanceof ObjectNode voices) || voices.isEmpty()) {
-            throw new IllegalArgumentException("tts.voiceMap must map speaker IDs to Chirp 3 HD voice names.");
+            throw new IllegalArgumentException("tts.voiceMap must map speaker IDs to voice names.");
         }
         Map<String, String> voiceMap = new LinkedHashMap<>();
         voices.properties().forEach(entry -> {
             String speaker = entry.getKey();
             JsonNode value = entry.getValue();
-            if (!value.isString() || !value.asString().startsWith(selectedLanguage + "-Chirp3-HD-")) {
-                throw new IllegalArgumentException("Invalid Chirp 3 HD voice for speaker: " + speaker);
+            if (!value.isString()) {
+                throw new IllegalArgumentException("Invalid voice for speaker: " + speaker);
             }
-            voiceMap.put(speaker, value.asString());
+            String voice = value.asString().strip();
+            if (!voice.startsWith(selectedLanguage + "-Chirp3-HD-")) {
+                throw new IllegalArgumentException("Invalid voice for speaker: " + speaker);
+            }
+            voiceMap.put(speaker, voice);
         });
         int fps = intValue(projectSettings, "fps", 30);
         double rate = number(tts, "speakingRate", 1.0);
@@ -225,7 +253,7 @@ public class ChirpProjectTtsService {
             projectId = "video-project";
         }
         return new Config(projectId, language, Map.copyOf(voiceMap), fps, rate, pitch,
-                (pauseMin + pauseMax) / 2.0);
+                pauseMin, pauseMax, (pauseMin + pauseMax) / 2.0);
     }
 
     private List<Scene> scenes(ObjectNode project, Config config) {
@@ -271,7 +299,7 @@ public class ChirpProjectTtsService {
                 if (speaker == null || speech == null || !config.voiceMap().containsKey(speaker)) {
                     throw new IllegalArgumentException(sceneId + " contains a blank segment or an unmapped speakerId: " + speaker);
                 }
-                parsed.add(new Segment(segment, speech, config.voiceMap().get(speaker)));
+                parsed.add(new Segment(segment, speaker, speech, config.voiceMap().get(speaker)));
             }
             scenes.add(new Scene(scene, sceneId, order, index, List.copyOf(parsed), List.copyOf(pauses)));
         }
@@ -291,44 +319,57 @@ public class ChirpProjectTtsService {
                 .build();
     }
 
-    private String ssml(String text, double pitch, List<Double> pauses,
-                        double defaultPause, int sentenceOffset) {
+    private SsmlPlan ssml(String text, Config config, List<Double> pauses, int sentenceOffset) {
         StringBuilder result = new StringBuilder("<speak>");
-        if (pitch != 0) {
+        if (config.pitch() != 0) {
             result.append("<prosody pitch=\"")
-                    .append(String.format(Locale.ROOT, "%+.1fst", pitch)).append("\">");
+                    .append(String.format(Locale.ROOT, "%+.1fst", config.pitch())).append("\">");
         }
         String normalized = text.strip().replaceAll("\\s+", " ");
         int pauseIndex = sentenceOffset;
         int start = 0;
+        Double lastPauseMs = null;
         for (int index = 0; index < normalized.length(); index++) {
             char character = normalized.charAt(index);
-            if (".!?。！？".indexOf(character) < 0) {
+            if (!isSentenceMark(character)) {
                 continue;
             }
+            int markStart = index;
+            while (index + 1 < normalized.length() && isSentenceMark(normalized.charAt(index + 1))) {
+                index++;
+            }
             result.append(escape(normalized.substring(start, index + 1)));
-            double pause = pauseIndex < pauses.size() ? pauses.get(pauseIndex) : defaultPause;
+            String punctuation = normalized.substring(markStart, index + 1);
+            double pause = pauseIndex < pauses.size() ? pauses.get(pauseIndex)
+                    : pauseFor(punctuation, config);
             pauseIndex++;
+            lastPauseMs = pause;
             if (pause > 0) {
                 result.append("<break time=\"").append(Math.round(pause)).append("ms\"/>");
             }
             start = index + 1;
         }
         result.append(escape(normalized.substring(start)));
-        if (pitch != 0) {
+        if (config.pitch() != 0) {
             result.append("</prosody>");
         }
-        return result.append("</speak>").toString();
+        return new SsmlPlan(result.append("</speak>").toString(),
+                pauseIndex - sentenceOffset, lastPauseMs);
     }
 
-    private int sentenceEndCount(String text, String language) {
-        int count = 0;
-        for (char character : text.toCharArray()) {
-            if (".!?。！？".indexOf(character) >= 0) {
-                count++;
-            }
+    private static boolean isSentenceMark(char character) {
+        return ".!?。！？".indexOf(character) >= 0;
+    }
+
+    private static double pauseFor(String punctuation, Config config) {
+        if (punctuation.indexOf('?') >= 0 || punctuation.indexOf('？') >= 0
+                || punctuation.length() > 1 && punctuation.indexOf('.') >= 0) {
+            return config.pauseMaxMs();
         }
-        return count;
+        if (punctuation.indexOf('!') >= 0 || punctuation.indexOf('！') >= 0) {
+            return config.pauseMinMs();
+        }
+        return config.defaultPauseMs();
     }
 
     private List<String> splitLongSegment(String text, String language) {
@@ -370,13 +411,23 @@ public class ChirpProjectTtsService {
         }
     }
 
-    private void writeSegmentTiming(ObjectNode segment, double start, double end, String voiceName) {
+    private void writeSegmentTiming(ObjectNode segment, double start, double end, String voiceName,
+                                    String nextSpeakerId, double targetPauseMs,
+                                    PcmSilenceTrimmer.Result trim) {
         ObjectNode timing = mapper.createObjectNode();
         timing.put("startSec", round(start));
         timing.put("endSec", round(end));
         timing.put("actualDurationSec", round(end - start));
         timing.put("source", "PCM_SAMPLE_COUNT");
         timing.put("subtitleTimingSource", "ESTIMATED_WITHIN_SEGMENT");
+        if (nextSpeakerId != null) {
+            ObjectNode transition = mapper.createObjectNode();
+            transition.put("nextSpeakerId", nextSpeakerId);
+            transition.put("targetPauseMs", round(targetPauseMs));
+            transition.put("detectedTrailingSilenceMs", round(trim.detectedMs()));
+            transition.put("removedTrailingSilenceMs", round(trim.removedMs()));
+            timing.set("speakerTransition", transition);
+        }
         segment.set("timing", timing);
         segment.put("voiceName", voiceName);
     }
@@ -488,11 +539,13 @@ public class ChirpProjectTtsService {
     }
 
     private record Config(String projectId, String languageCode, Map<String, String> voiceMap,
-                          int fps, double rate, double pitch, double defaultPauseMs) { }
+                          int fps, double rate, double pitch, double pauseMinMs,
+                          double pauseMaxMs, double defaultPauseMs) { }
     private record Scene(ObjectNode node, String id, int order, int originalIndex,
                          List<Segment> segments, List<Double> pauseMs) { }
-    private record Segment(ObjectNode node, String text, String voiceName) { }
+    private record Segment(ObjectNode node, String speakerId, String text, String voiceName) { }
     private record PendingAudio(String name, byte[] content) { }
+    private record SsmlPlan(String ssml, int sentenceCount, Double lastPauseMs) { }
 
     public record Workload(int totalScenes, int totalSegments) { }
     public record Progress(String phase, String sceneId, int sceneNumber, int totalScenes,
