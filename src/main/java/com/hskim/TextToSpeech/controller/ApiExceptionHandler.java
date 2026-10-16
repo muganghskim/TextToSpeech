@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.RejectedExecutionException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -27,5 +28,11 @@ public class ApiExceptionHandler {
     public ResponseEntity<Map<String, String>> synthesisFailure(IOException exception) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("error", "Speech synthesis or output file creation failed."));
+    }
+
+    @ExceptionHandler(RejectedExecutionException.class)
+    public ResponseEntity<Map<String, String>> queueFull(RejectedExecutionException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(Map.of("error", "Project3 queue is full. Try again after a running job finishes."));
     }
 }

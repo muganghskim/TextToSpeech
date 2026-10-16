@@ -2,14 +2,17 @@ package com.hskim.TextToSpeech.controller;
 
 import com.hskim.TextToSpeech.model.TtsRequest;
 import com.hskim.TextToSpeech.model.TtsResult;
+import com.hskim.TextToSpeech.model.Project3JobStatus;
 import com.hskim.TextToSpeech.model.VideoProjectTtsResult;
 import com.hskim.TextToSpeech.service.TtsService;
 import com.hskim.TextToSpeech.service.VideoProjectTtsService;
 import com.hskim.TextToSpeech.service.ChirpProjectTtsService;
+import com.hskim.TextToSpeech.service.ChirpProjectJobService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,12 +36,15 @@ public class TtsController {
     private final TtsService ttsService;
     private final VideoProjectTtsService videoProjectTtsService;
     private final ChirpProjectTtsService chirpProjectTtsService;
+    private final ChirpProjectJobService chirpProjectJobService;
 
     public TtsController(TtsService ttsService, VideoProjectTtsService videoProjectTtsService,
-                         ChirpProjectTtsService chirpProjectTtsService) {
+                         ChirpProjectTtsService chirpProjectTtsService,
+                         ChirpProjectJobService chirpProjectJobService) {
         this.ttsService = ttsService;
         this.videoProjectTtsService = videoProjectTtsService;
         this.chirpProjectTtsService = chirpProjectTtsService;
+        this.chirpProjectJobService = chirpProjectJobService;
     }
 
     @PostMapping("/convert-to-audio")
@@ -68,7 +74,19 @@ public class TtsController {
     }
 
     @PostMapping(value = "/synthesize-project3", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public VideoProjectTtsResult synthesizeProject3(@RequestBody ObjectNode request) throws IOException {
+    public ResponseEntity<Project3JobStatus> synthesizeProject3(@RequestBody ObjectNode request) {
+        Project3JobStatus job = chirpProjectJobService.submit(request);
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .header(HttpHeaders.LOCATION, job.statusUrl()).body(job);
+    }
+
+    @GetMapping("/synthesize-project3/jobs/{jobId}")
+    public Project3JobStatus project3Job(@PathVariable String jobId) throws IOException {
+        return chirpProjectJobService.status(jobId);
+    }
+
+    @PostMapping(value = "/synthesize-project3/sync", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public VideoProjectTtsResult synthesizeProject3Sync(@RequestBody ObjectNode request) throws IOException {
         return chirpProjectTtsService.synthesize(request);
     }
 

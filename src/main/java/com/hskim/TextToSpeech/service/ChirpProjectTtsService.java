@@ -54,6 +54,23 @@ public class ChirpProjectTtsService {
     }
 
     public VideoProjectTtsResult synthesize(ObjectNode input) throws IOException {
+        return synthesize(input, progress -> { });
+    }
+
+    public Workload workload(ObjectNode input) {
+        if (input == null) {
+            throw new IllegalArgumentException("The video project JSON body is required.");
+        }
+        ObjectNode copy = input.deepCopy();
+        List<Scene> parsed = scenes(copy, config(copy));
+        int segments = parsed.stream().mapToInt(scene -> scene.segments().size()).sum();
+        if (segments == 0) {
+            throw new IllegalArgumentException("At least one scene must contain ttsSegments.");
+        }
+        return new Workload(parsed.size(), segments);
+    }
+
+    public VideoProjectTtsResult synthesize(ObjectNode input, ProgressListener listener) throws IOException {
         if (input == null) {
             throw new IllegalArgumentException("The video project JSON body is required.");
         }
@@ -76,14 +93,20 @@ public class ChirpProjectTtsService {
         Map<String, Double> sceneStartTimes = new LinkedHashMap<>();
         int elapsedSamples = 0;
         int sceneNumber = 0;
+        int completedSegments = 0;
+        int totalSegments = scenes.stream().mapToInt(scene -> scene.segments().size()).sum();
 
         for (Scene scene : scenes) {
             sceneNumber++;
+            int segmentNumber = 0;
             int sceneStartSamples = elapsedSamples;
             ByteArrayOutputStream scenePcm = new ByteArrayOutputStream();
             int sentenceIndex = 0;
 
             for (Segment segment : scene.segments()) {
+                segmentNumber++;
+                listener.onProgress(new Progress("STARTED", scene.id(), sceneNumber, scenes.size(),
+                        segmentNumber, scene.segments().size(), completedSegments, totalSegments));
                 int segmentStartSamples = elapsedSamples;
                 for (String part : splitLongSegment(segment.text(), config.languageCode())) {
                     String ssml = ssml(part, config.pitch(), scene.pauseMs(),
@@ -102,6 +125,9 @@ public class ChirpProjectTtsService {
                 double end = seconds(elapsedSamples);
                 writeSegmentTiming(segment.node(), start, end, segment.voiceName());
                 addEstimatedCues(cues, segment.text(), config.languageCode(), start, end);
+                completedSegments++;
+                listener.onProgress(new Progress("COMPLETED", scene.id(), sceneNumber, scenes.size(),
+                        segmentNumber, scene.segments().size(), completedSegments, totalSegments));
             }
 
             double start = seconds(sceneStartSamples);
@@ -467,4 +493,14 @@ public class ChirpProjectTtsService {
                          List<Segment> segments, List<Double> pauseMs) { }
     private record Segment(ObjectNode node, String text, String voiceName) { }
     private record PendingAudio(String name, byte[] content) { }
+
+    public record Workload(int totalScenes, int totalSegments) { }
+    public record Progress(String phase, String sceneId, int sceneNumber, int totalScenes,
+                           int segmentNumber, int segmentsInScene,
+                           int completedSegments, int totalSegments) { }
+
+    @FunctionalInterface
+    public interface ProgressListener {
+        void onProgress(Progress progress);
+    }
 }

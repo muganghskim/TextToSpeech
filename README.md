@@ -119,7 +119,9 @@ This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even
 
 ### Chirp 3 HD project with multiple speakers
 
-`POST /text/synthesize-project3` reads `tts.voiceMap` and each scene's ordered `ttsSegments`. A segment's `speakerId` selects its voice. The `narration` field stays in the output as metadata; the segment text is what gets spoken. All speaker IDs must be mapped before any Google request is sent.
+`POST /text/synthesize-project3` starts a background job and returns HTTP 202 with a `jobId` and `statusUrl` immediately. Poll `GET /text/synthesize-project3/jobs/{jobId}` for `QUEUED`, `RUNNING`, `COMPLETED`, or `FAILED`. The status includes completed/total segments, percentage, current scene/segment, update time, and (when complete) the original output result with WAV/SRT/timed-JSON URLs. Console output and `logs/tts.log` contain the job ID and each segment's start/completion, plus a stack trace on failure (`TTS_LOG_FILE` overrides the log path). One project runs at a time; up to eight more can wait in the queue. Status is kept in memory for 24 hours after completion, so restarting the app clears it. `POST /text/synthesize-project3/sync` preserves the previous wait-for-result behavior.
+
+The endpoint reads `tts.voiceMap` and each scene's ordered `ttsSegments`. A segment's `speakerId` selects its voice. The `narration` field stays in the output as metadata; the segment text is what gets spoken. All speaker IDs must be mapped before any Google request is sent.
 
 ```json
 {
@@ -146,12 +148,21 @@ This endpoint forces `languageCode=ko-KR` and `voiceName=ko-KR-Standard-C`, even
 ```
 
 ```powershell
-$result = Invoke-RestMethod `
+$job = Invoke-RestMethod `
   -Method Post `
   -Uri 'http://localhost:8080/text/synthesize-project3' `
   -ContentType 'application/json' `
   -InFile 'C:\path\to\video_project.json'
 
+$job.statusUrl
+do {
+  Start-Sleep -Seconds 2
+  $status = Invoke-RestMethod -Uri "http://localhost:8080$($job.statusUrl)"
+  "$($status.status): $($status.completedSegments)/$($status.totalSegments) ($($status.progressPercent)%)"
+} while ($status.status -in @('QUEUED', 'RUNNING'))
+
+if ($status.status -ne 'COMPLETED') { throw $status.error }
+$result = $status.result
 Invoke-WebRequest -Uri "http://localhost:8080$($result.audioUrl)" -OutFile '.\project.wav'
 Invoke-WebRequest -Uri "http://localhost:8080$($result.subtitleUrl)" -OutFile '.\project.srt'
 Invoke-WebRequest -Uri "http://localhost:8080$($result.timedProjectUrl)" -OutFile '.\project-timed.json'

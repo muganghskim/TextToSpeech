@@ -14,6 +14,8 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -63,7 +65,15 @@ class ChirpProjectTtsServiceTest {
                 }
                 """);
 
-        VideoProjectTtsResult result = service.synthesize(input);
+        List<ChirpProjectTtsService.Progress> progress = new ArrayList<>();
+        VideoProjectTtsResult result = service.synthesize(input, progress::add);
+
+        assertThat(progress).extracting(ChirpProjectTtsService.Progress::phase)
+                .containsExactly("STARTED", "COMPLETED", "STARTED", "COMPLETED",
+                        "STARTED", "COMPLETED");
+        assertThat(progress.get(0).completedSegments()).isZero();
+        assertThat(progress.get(5).completedSegments()).isEqualTo(3);
+        assertThat(progress.get(5).totalSegments()).isEqualTo(3);
 
         assertThat(result.audioFile()).endsWith(".wav");
         assertThat(PcmWav.read(Files.readAllBytes(Path.of(result.audioFile()))).durationSeconds())

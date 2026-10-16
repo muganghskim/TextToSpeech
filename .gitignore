@@ -35,4 +35,5 @@ build/
 
 ### Generated media ###
 output/
+logs/
 *.json
